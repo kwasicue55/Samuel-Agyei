@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile containing identity and billing tier info.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The UID of the user." },
+        "email": { "type": "string", "description": "User email address." },
+        "name": { "type": "string", "description": "User visible display name." },
+        "subscription_status": { "type": "string", "enum": ["free", "pro"], "description": "Billing tier of the user." }
+      },
+      "required": ["id", "email", "name", "subscription_status"]
+    },
+    "Kit": {
+      "title": "Study Kit",
+      "description": "A generated or pre-built course study kit.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the study kit." },
+        "ownerId": { "type": "string", "description": "UID of the owner who uploaded the kit." },
+        "title": { "type": "string", "description": "Short title of the document." },
+        "raw_text_content": { "type": "string", "description": "Original raw course text or notes." },
+        "upload_date": { "type": "string", "description": "Date of upload in YYYY-MM-DD format." },
+        "quick_read_json": { "type": "array", "description": "Bullet point summaries." },
+        "deep_dive_json": { "type": "object", "description": "Explanatory structures like notes, definitions, formulas." },
+        "eli5_text": { "type": "string", "description": "Simple cognitive analog model text." }
+      },
+      "required": ["id", "ownerId", "title", "raw_text_content", "upload_date", "quick_read_json", "deep_dive_json", "eli5_text"]
+    },
+    "Flashcard": {
+      "title": "Active Flashcard",
+      "description": "Single flashcard term or question within a study kit.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "document_id": { "type": "string" },
+        "question_text": { "type": "string" },
+        "answer_text": { "type": "string" },
+        "review_status": { "type": "string", "enum": ["learning", "mastered"] },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "document_id", "question_text", "answer_text", "review_status", "ownerId"]
+    },
+    "QuizQuestion": {
+      "title": "Practice Quiz Question",
+      "description": "Single multiple-choice practice question within a study kit.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "document_id": { "type": "string" },
+        "question_text": { "type": "string" },
+        "options_array": { "type": "array" },
+        "correct_option_index": { "type": "integer" },
+        "explanation": { "type": "string" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "document_id", "question_text", "options_array", "correct_option_index", "explanation", "ownerId"]
+    },
+    "ChatMessage": {
+      "title": "Socratic Chat Message",
+      "description": "A single interaction message in the study room.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "model"] },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "role", "text", "timestamp"]
+    },
+    "QuizSession": {
+      "title": "Quiz Score Session Info",
+      "description": "High-level summary of question scoring history.",
+      "type": "object",
+      "properties": {
+        "total": { "type": "integer" },
+        "correct": { "type": "integer" }
+      },
+      "required": ["total", "correct"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User registers public metadata here."
+    },
+    "/kits/{kitId}": {
+      "schema": "Kit",
+      "description": "A root level course kit."
+    },
+    "/kits/{kitId}/flashcards/{cardId}": {
+      "schema": "Flashcard",
+      "description": "Subcollection of flashcard items of a kit."
+    },
+    "/kits/{kitId}/quizzes/{quizId}": {
+      "schema": "QuizQuestion",
+      "description": "Subcollection of quiz items of a kit."
+    },
+    "/kits/{kitId}/messages/{msgId}": {
+      "schema": "ChatMessage",
+      "description": "Socratic tutor messages exchanged for a specific kit."
+    },
+    "/users/{userId}/quizSessions/{kitId}": {
+      "schema": "QuizSession",
+      "description": "User test records tracked per kit."
+    }
+  }
+}

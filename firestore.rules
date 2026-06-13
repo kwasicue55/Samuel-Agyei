@@ -1,0 +1,190 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Default Safety Net: Deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // 2. Schema Validation Blueprints
+
+    // User profile schema
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'email', 'name', 'subscription_status'])
+        && data.keys().size() == 4
+        && data.id is string && data.id.size() <= 128
+        && data.email is string && data.email.size() <= 256
+        && data.name is string && data.name.size() <= 128
+        && data.subscription_status in ['free', 'pro'];
+    }
+
+    // Learn Kit schema
+    function isValidKit(data) {
+      return data.keys().hasAll(['id', 'ownerId', 'title', 'raw_text_content', 'upload_date', 'quick_read_json', 'deep_dive_json', 'eli5_text'])
+        && data.keys().size() == 8
+        && data.id is string && data.id.size() <= 128
+        && data.ownerId is string && data.ownerId.size() <= 128
+        && data.title is string && data.title.size() <= 200
+        && data.raw_text_content is string && data.raw_text_content.size() <= 50000
+        && data.upload_date is string && data.upload_date.size() <= 32
+        && data.quick_read_json is list && data.quick_read_json.size() <= 50
+        && data.deep_dive_json is map
+        && data.eli5_text is string && data.eli5_text.size() <= 10000;
+    }
+
+    // Flashcard schema
+    function isValidFlashcard(data) {
+      return data.keys().hasAll(['id', 'document_id', 'question_text', 'answer_text', 'review_status', 'ownerId'])
+        && data.keys().size() == 6
+        && data.id is string && data.id.size() <= 128
+        && data.document_id is string && data.document_id.size() <= 128
+        && data.question_text is string && data.question_text.size() <= 2000
+        && data.answer_text is string && data.answer_text.size() <= 5000
+        && data.review_status in ['learning', 'mastered']
+        && data.ownerId is string && data.ownerId.size() <= 128;
+    }
+
+    // QuizQuestion schema
+    function isValidQuizQuestion(data) {
+      return data.keys().hasAll(['id', 'document_id', 'question_text', 'options_array', 'correct_option_index', 'explanation', 'ownerId'])
+        && data.keys().size() == 7
+        && data.id is string && data.id.size() <= 128
+        && data.document_id is string && data.document_id.size() <= 128
+        && data.question_text is string && data.question_text.size() <= 2000
+        && data.options_array is list && data.options_array.size() > 0 && data.options_array.size() <= 10
+        && data.correct_option_index is int && data.correct_option_index >= 0 && data.correct_option_index < data.options_array.size()
+        && data.explanation is string && data.explanation.size() <= 10000
+        && data.ownerId is string && data.ownerId.size() <= 128;
+    }
+
+    // ChatMessage schema
+    function isValidChatMessage(data) {
+      return data.keys().hasAll(['id', 'role', 'text', 'timestamp'])
+        && data.keys().size() == 4
+        && data.id is string && data.id.size() <= 128
+        && data.role in ['user', 'model']
+        && data.text is string && data.text.size() <= 10000
+        && data.timestamp is string && data.timestamp.size() <= 64;
+    }
+
+    // QuizSession schema
+    function isValidQuizSession(data) {
+      return data.keys().hasAll(['total', 'correct'])
+        && data.keys().size() == 2
+        && data.total is int && data.total >= 0
+        && data.correct is int && data.correct >= 0 && data.correct <= data.total;
+    }
+
+    // --- Endpoints Rule Blocks ---
+
+    // 1. Users Profiles
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data)
+        && request.resource.data.id == resource.data.id; // Immutable database keys
+      allow delete: if false; // Profiles are deleted only by admin scripts
+    }
+
+    // 2. User quizSessions
+    match /users/{userId}/quizSessions/{kitId} {
+      allow get, list: if isOwner(userId) && isValidId(kitId);
+      allow create: if isOwner(userId) && isValidId(kitId) && isValidQuizSession(request.resource.data);
+      allow update: if isOwner(userId) && isValidId(kitId) && isValidQuizSession(request.resource.data);
+      allow delete: if isOwner(userId) && isValidId(kitId);
+    }
+
+    // 3. Main Study Kits
+    match /kits/{kitId} {
+      allow get: if isSignedIn() && isOwner(resource.data.ownerId) && isValidId(kitId);
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isSignedIn() && isValidId(kitId)
+        && isOwner(request.resource.data.ownerId)
+        && isValidKit(request.resource.data);
+
+      allow update: if isSignedIn() && isOwner(resource.data.ownerId) && isValidId(kitId)
+        && isOwner(request.resource.data.ownerId)
+        && isValidKit(request.resource.data)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.ownerId == resource.data.ownerId; // Strict static ownership
+
+      allow delete: if isSignedIn() && isOwner(resource.data.ownerId) && isValidId(kitId);
+    }
+
+    // 4. Subcollection - Flashcards of a kit (Optimized list checks)
+    match /kits/{kitId}/flashcards/{cardId} {
+      allow get: if isSignedIn() && isOwner(resource.data.ownerId) && isValidId(kitId) && isValidId(cardId);
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isSignedIn() && isValidId(kitId) && isValidId(cardId)
+        && isOwner(request.resource.data.ownerId)
+        && isValidFlashcard(request.resource.data)
+        && request.resource.data.document_id == kitId;
+
+      allow update: if isSignedIn() && isOwner(resource.data.ownerId) && isValidId(kitId) && isValidId(cardId)
+        && isOwner(request.resource.data.ownerId)
+        && isValidFlashcard(request.resource.data)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.document_id == resource.data.document_id
+        && request.resource.data.ownerId == resource.data.ownerId;
+
+      allow delete: if isSignedIn() && isOwner(resource.data.ownerId) && isValidId(kitId) && isValidId(cardId);
+    }
+
+    // 5. Subcollection - Quizzes of a kit (Bound verification)
+    match /kits/{kitId}/quizzes/{quizId} {
+      allow get: if isSignedIn() && isOwner(resource.data.ownerId) && isValidId(kitId) && isValidId(quizId);
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isSignedIn() && isValidId(kitId) && isValidId(quizId)
+        && isOwner(request.resource.data.ownerId)
+        && isValidQuizQuestion(request.resource.data)
+        && request.resource.data.document_id == kitId;
+
+      allow update: if isSignedIn() && isOwner(resource.data.ownerId) && isValidId(kitId) && isValidId(quizId)
+        && isOwner(request.resource.data.ownerId)
+        && isValidQuizQuestion(request.resource.data)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.document_id == resource.data.document_id
+        && request.resource.data.ownerId == resource.data.ownerId;
+
+      allow delete: if isSignedIn() && isOwner(resource.data.ownerId) && isValidId(kitId) && isValidId(quizId);
+    }
+
+    // 6. Subcollection - Active Recall Messages / Chat with Socratic feedback
+    match /kits/{kitId}/messages/{msgId} {
+      function getKitOwner() {
+        return get(/databases/$(database)/documents/kits/$(kitId)).data.ownerId;
+      }
+
+      allow get: if isSignedIn() && isOwner(getKitOwner()) && isValidId(kitId) && isValidId(msgId);
+      allow list: if isSignedIn() && isOwner(getKitOwner());
+
+      allow create: if isSignedIn() && isValidId(kitId) && isValidId(msgId)
+        && isOwner(getKitOwner())
+        && isValidChatMessage(request.resource.data);
+
+      allow delete: if isSignedIn() && isOwner(getKitOwner()) && isValidId(kitId) && isValidId(msgId);
+    }
+
+  }
+}
